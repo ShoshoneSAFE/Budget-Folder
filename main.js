@@ -64,5 +64,5 @@ function doPrint(){
 }
 
 // LIVE DATA ARRAYS
-let {D,REV} = loadData();
+({D,REV} = loadData());
 
