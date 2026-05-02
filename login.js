@@ -705,15 +705,55 @@ function renderSuggList(){
   al.innerHTML=arr.length?arr.map(s=>`<div class="sugg-item"><div class="si-date">${s.date}</div><div class="si-name">${s.name||'Anonymous'}</div><div class="si-text">${s.text}</div><div class="si-contact">${s.email?'✉ '+s.email:''} ${s.phone?'📞 '+s.phone:''}</div></div>`).join(''):'<em style="color:#999;font-size:13px;">No suggestions yet.</em>';
 }
 
-function submitSugg(){
-  const text=document.getElementById('sText').value.trim();
-  if(!text){alert('Please enter a suggestion.');return;}
-  const arr=loadSugg();
-  arr.unshift({text,name:document.getElementById('sName').value.trim(),email:document.getElementById('sEmail').value.trim(),phone:document.getElementById('sPhone').value.trim(),date:new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})});
+// Cloud Function URL — proxies suggestion to GitHub Issues (PAT stored in GCP Secret Manager)
+const CLOUD_FUNCTION_URL = 'https://us-central1-county-workflow.cloudfunctions.net/createGitHubIssue';
+
+async function submitSugg() {
+  const text = document.getElementById('sText').value.trim();
+  if (!text) { alert('Please enter a suggestion.'); return; }
+
+  const name  = document.getElementById('sName').value.trim();
+  const email = document.getElementById('sEmail').value.trim();
+  const phone = document.getElementById('sPhone').value.trim();
+
+  // Save locally
+  const arr = loadSugg();
+  arr.unshift({
+    text, name, email, phone,
+    date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  });
   saveSugg(arr);
-  ['sText','sName','sEmail','sPhone'].forEach(id=>document.getElementById(id).value='');
+
+  // Clear form fields immediately
+  ['sText', 'sName', 'sEmail', 'sPhone'].forEach(id => document.getElementById(id).value = '');
+
+  // Show optimistic confirmation right away — don't make user wait on GitHub
   alert('✅ Thank you! Your suggestion has been submitted.\nRyan Frick will review it personally.');
   switchSuggTab(2);
+
+  // Call Cloud Function in background (non-blocking)
+  try {
+    const response = await fetch(CLOUD_FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, name, email, phone })
+    });
+
+    const result = await response.json();
+
+    if (result.success) {
+      // Store GitHub issue link in local suggestion for admin reference
+      arr[0].githubIssueUrl = result.issueUrl;
+      arr[0].githubIssueNum = result.issueNumber;
+      saveSugg(arr);
+      console.log(`✅ GitHub issue created: ${result.issueUrl}`);
+    } else {
+      console.warn('GitHub issue creation failed:', result.error);
+    }
+  } catch (err) {
+    // Silent fail — local save already succeeded, user already confirmed
+    console.warn('GitHub sync failed (suggestion saved locally):', err.message);
+  }
 }
 
 // INIT — called after DOM ready
