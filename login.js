@@ -697,12 +697,122 @@ function switchSuggTab(n){
   if(n===2||n===3)renderSuggList();
 }
 
-function renderSuggList(){
-  const arr=loadSugg();
-  const pl=document.getElementById('suggList');
-  pl.innerHTML=arr.length?arr.map(s=>`<div class="sugg-item"><div class="si-date">${s.date}</div><div class="si-name">${s.name||'Anonymous'}</div><div class="si-text">${s.text}</div></div>`).join(''):'<em style="color:#999;font-size:13px;">No suggestions yet.</em>';
-  const al=document.getElementById('suggAdminList');
-  al.innerHTML=arr.length?arr.map(s=>`<div class="sugg-item"><div class="si-date">${s.date}</div><div class="si-name">${s.name||'Anonymous'}</div><div class="si-text">${s.text}</div><div class="si-contact">${s.email?'✉ '+s.email:''} ${s.phone?'📞 '+s.phone:''}</div></div>`).join(''):'<em style="color:#999;font-size:13px;">No suggestions yet.</em>';
+// GitHub issues endpoint — public repo, no token needed for reads
+const GITHUB_ISSUES_URL = 'https://api.github.com/repos/ShoshoneSAFE/Budget-Folder/issues?labels=user-suggestion&state=open&per_page=50';
+
+async function renderSuggList() {
+  const pl = document.getElementById('suggList');
+  const al = document.getElementById('suggAdminList');
+
+  // Show loading state
+  if (pl) pl.innerHTML = '<em style="color:#999;font-size:13px;">Loading suggestions...</em>';
+  if (al) al.innerHTML = '<em style="color:#999;font-size:13px;">Loading suggestions...</em>';
+
+  try {
+    const response = await fetch(GITHUB_ISSUES_URL, {
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    });
+
+    if (!response.ok) throw new Error(`GitHub API error ${response.status}`);
+
+    const issues = await response.json();
+
+    if (!issues.length) {
+      const empty = '<em style="color:#999;font-size:13px;">No suggestions yet.</em>';
+      if (pl) pl.innerHTML = empty;
+      if (al) al.innerHTML = empty;
+      return;
+    }
+
+    // Parse contact info table from issue body
+    function parseField(body, field) {
+      const regex = new RegExp(`\\|\\s*${field}\\s*\\|\\s*(.+?)\\s*\\|`, 'i');
+      const match = body?.match(regex);
+      if (!match) return null;
+      const val = match[1].trim();
+      return (val === '_Anonymous_' || val === '_Not provided_') ? null : val;
+    }
+
+    // Tab 2 — Public view (no contact info)
+    if (pl) {
+      pl.innerHTML = issues.map(issue => {
+        const suggestionText = issue.body
+          ?.split('### Suggestion')[1]
+          ?.split('---')[0]
+          ?.trim() || issue.title;
+
+        const date = new Date(issue.created_at).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric'
+        });
+
+        const name = parseField(issue.body, 'Name') || 'Anonymous';
+
+        return `
+          <div class="sugg-item">
+            <div class="si-date">${date}</div>
+            <div class="si-name">${name}</div>
+            <div class="si-text">${suggestionText}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Tab 3 — Admin view (full details + GitHub link)
+    if (al) {
+      al.innerHTML = issues.map(issue => {
+        const suggestionText = issue.body
+          ?.split('### Suggestion')[1]
+          ?.split('---')[0]
+          ?.trim() || issue.title;
+
+        const date = new Date(issue.created_at).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric'
+        });
+
+        const name  = parseField(issue.body, 'Name');
+        const email = parseField(issue.body, 'Email');
+        const phone = parseField(issue.body, 'Phone');
+
+        return `
+          <div class="sugg-item">
+            <div class="si-date">${date}</div>
+            <div class="si-name">${name || 'Anonymous'}</div>
+            <div class="si-text">${suggestionText}</div>
+            <div class="si-contact">
+              ${email ? '✉ ' + email : ''}
+              ${phone ? '📞 ' + phone : ''}
+            </div>
+            <div class="si-github">
+              <a href="${issue.html_url}" target="_blank" 
+                style="font-size:11px;color:#667eea;text-decoration:none;">
+                🔗 #${issue.number} — View on GitHub
+              </a>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+  } catch (err) {
+    console.error('Failed to load suggestions from GitHub:', err);
+    // Fallback to localStorage if GitHub fetch fails
+    const arr = loadSugg();
+    const fallback = arr.length
+      ? arr.map(s => `
+          <div class="sugg-item">
+            <div class="si-date">${s.date}</div>
+            <div class="si-name">${s.name || 'Anonymous'}</div>
+            <div class="si-text">${s.text}</div>
+          </div>
+        `).join('')
+      : '<em style="color:#999;font-size:13px;">No suggestions yet.</em>';
+
+    if (pl) pl.innerHTML = fallback;
+    if (al) al.innerHTML = fallback;
+  }
 }
 
 // Cloud Function URL — proxies suggestion to GitHub Issues (PAT stored in GCP Secret Manager)
